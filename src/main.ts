@@ -11,22 +11,14 @@ class Position {
   x: number;
   y: number;
 }
-
-class GameObject {
-  constructor() {
-    this.position = new Position(0, 0)
-  }
-  position: Position;
-}
-
-class TextGameObject extends GameObject {
+class TextGameObject {
   readonly width: number;
   readonly height: number;
-  readonly context: CanvasRenderingContext2D
-  text: string;
+  private context: CanvasRenderingContext2D
+  readonly text: string;
+  position: Position;
 
   constructor(position: Position, text: string, context: CanvasRenderingContext2D) {
-    super()
     this.position = position;
 
     this.context = context;
@@ -54,11 +46,11 @@ class TextGameObject extends GameObject {
   }
 }
 
-class MissileGameObject extends GameObject {
+class MissileGameObject {
   target: TextGameObject;
   readonly context: CanvasRenderingContext2D
+  position: Position;
   constructor(position: Position, target: TextGameObject, context: CanvasRenderingContext2D) {
-    super()
     this.position = position;
     this.context = context;
     this.target = target;
@@ -72,38 +64,36 @@ class MissileGameObject extends GameObject {
   }
 }
 
-class ExplosionParticle extends GameObject {
-  radius: number;
+class ExplosionParticle {
+  char: string;
   dx: number;
   dy: number;
   alpha: number;
   context: CanvasRenderingContext2D;
-  constructor(position: Position, radius: number, dx: number, dy: number, context: CanvasRenderingContext2D) {
-    super()
+  gravity: number = 0.45;
+  gravitySpeed: number = 0;
+  position: Position;
+  constructor(position: Position, char: string, dx: number, dy: number, context: CanvasRenderingContext2D) {
     this.position = position;
-    this.radius = radius;
+    this.char = char;
     this.dx = dx;
     this.dy = dy;
     this.alpha = 1;
     this.context = context;
   }
-  draw() {
+  draw(deltaTimeMultiplier: number) {
     this.context.save();
     this.context.globalAlpha = this.alpha;
     this.context.fillStyle = 'red';
 
-    this.context.beginPath();
-
-    this.context.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2, false);
-    this.context.fill();
+    this.context.fillText(this.char, this.position.x, this.position.y);
 
     this.context.restore();
-  }
-  update() {
-    this.draw();
-    this.alpha -= 0.01;
-    this.position.x += this.dx;
-    this.position.y += this.dy;
+
+    this.alpha -= 0.03 * deltaTimeMultiplier;
+    this.gravitySpeed += this.gravity * deltaTimeMultiplier;
+    this.position.x += this.dx * deltaTimeMultiplier;
+    this.position.y += (this.dy + this.gravitySpeed) * deltaTimeMultiplier;
   }
 }
 
@@ -124,12 +114,12 @@ const bootstrap = () => {
     const handleResizeCanvas = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      context.font = "48px Inter";
+      context.font = "36px Inter";
     }
     // resize the canvas to fill browser window dynamically
     window.addEventListener('resize', handleResizeCanvas, false);
     handleResizeCanvas();
-    context.font = "48px Inter";
+    context.font = "36px Inter";
 
 
 
@@ -152,20 +142,21 @@ const bootstrap = () => {
     const missiles: MissileGameObject[] = []
     const explosionParticles: ExplosionParticle[] = [];
 
-
     const onInputChange = (value: string) => {
-      words.forEach((word, i) => {
-        if (word.text.startsWith(value)) {
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        if (value && word.text.startsWith(value)) {
           word.matchedString = value;
           if (word.matchedString === word.text) {
             missiles.push(new MissileGameObject(new Position(word.position.x, canvas.height), word, context))
             words.splice(i, 1)
             changeInput('');
+            break;
           }
         } else {
           word.matchedString = null;
         }
-      })
+      }
     }
     const changeInput = (value: string) => {
       input.value = value;
@@ -180,6 +171,9 @@ const bootstrap = () => {
 
 
     const spawnInterval = setInterval(() => {
+      if (document.hidden) {
+        return
+      }
       const word = new TextGameObject(new Position(Math.random() * canvas.width, 0), generateWord() as string, context);
       const offset = word.position.x + word.width - canvas.width
       if (offset > 0) {
@@ -187,9 +181,6 @@ const bootstrap = () => {
       }
       words.push(word)
     }, 1000);
-
-
-
 
     const draw: FrameRequestCallback = (timestamp) => {
       stats.begin();
@@ -217,23 +208,29 @@ const bootstrap = () => {
         missile.target.draw()
 
         if (missile.position.y <= missile.target.position.y) {
-          missiles.splice(i, 1)
-          for (let i = 0; i <= 150; i++) {
-            const dx = (Math.random() - 0.5) * (Math.random() * 6);
-            const dy = (Math.random() - 0.5) * (Math.random() * 6);
-            const radius = Math.random() * 3;
-            const particle = new ExplosionParticle(new Position(missile.target.position.x + missile.target.width / 2, missile.target.position.y), radius, dx, dy, context);
-    
+          let accumulatedWidth = 0;
+          missile.target.text.split('').forEach((char, i, text) => {
+            const metrics = context.measureText(char);
+            const width = metrics.width;
+
+            let dx = text.length % 2 !== 0 ? (-Math.floor(text.length / 2) + i) : (-text.length / 2 + i < 0 ? -text.length / 2 + i : -text.length / 2 + i + 1);
+            dx += Math.random() - 0.5
+            dx *= 3
+            let dy = text.length / 2 > i ? -(i + 1) : -(text.length - i)
+            dy += Math.random() - 0.5
+            dy *= 3
+            const particle = new ExplosionParticle(new Position(missile.target.position.x + accumulatedWidth, missile.target.position.y), char, dx, dy, context);
+            accumulatedWidth += width;
             explosionParticles.push(particle);
-          }
+          })
+          missiles.splice(i, 1)
         }
       })
 
       explosionParticles.forEach((particle, i) => {
+        particle.draw(deltaTimeMultiplier)
         if (particle.alpha <= 0) {
           explosionParticles.splice(i, 1);
-        } else {
-          particle.update()
         }
       })
 
